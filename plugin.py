@@ -5,6 +5,7 @@ from bisect import bisect_right
 from copy import deepcopy
 from pathlib import Path
 from typing import ClassVar
+from time import monotonic
 import asyncio
 import hashlib
 import json
@@ -20,6 +21,8 @@ from pydantic import Field
 CITATION_LINE = re.compile(r'(?m)^\s*--出自[（(][^\n]+[）)]\s*$')
 SENTENCE_BREAK = re.compile(r'[。！？!?；;\n\r]+')
 FENCED_CODE = re.compile(r'```.*?(?:```|\Z)', re.S)
+MAX_LOOKUP_CHARS = 512
+PARTIAL_SCAN_BUDGET_SECONDS = 0.150
 
 
 def normalize(text: str) -> str:
@@ -76,11 +79,14 @@ class VerseIndex:
     def _partial_find(self, text: str, min_chars: int, max_references: int) -> list[str]:
         # Native substring searches keep this small and dependency-free. Extend
         # every exact seed to the longest shared span without crossing a verse.
+        deadline = monotonic() + PARTIAL_SCAN_BUDGET_SECONDS
         token = normalize(re.sub(r'(?:https?://|www\.)\S+', '\x00', text, flags=re.I))
         best = {}
         covered = {}
         seed_positions = {}
         for qpos in range(len(token) - min_chars + 1):
+            if monotonic() >= deadline:
+                return []
             seed = token[qpos:qpos + min_chars]
             if '\x00' in seed or not any('\u3400' <= c <= '\u9fff' for c in seed):
                 continue
@@ -92,6 +98,8 @@ class VerseIndex:
                 else:
                     positions, start = [], 0
                     while True:
+                        if monotonic() >= deadline:
+                            return []
                         pos = self.corpus.find(seed, start)
                         if pos < 0:
                             break
@@ -99,6 +107,8 @@ class VerseIndex:
                         start = pos + 1
                     seed_positions[seed] = positions
             for pos in seed_positions[seed]:
+                if monotonic() >= deadline:
+                    return []
                 diagonal = pos - qpos
                 if any(a <= qpos and qpos + min_chars <= b for a, b in covered.get(diagonal, ())):
                     continue
@@ -119,11 +129,13 @@ class VerseIndex:
                 if score > best.get(row_id, (0, 0)):
                     best[row_id] = score
         ranked = sorted(best, key=lambda i: (-best[i][0], -best[i][1], i))
+        if monotonic() >= deadline:
+            return []
         return [f"{self.rows[i]['book']} {self.rows[i]['chapter']}:{self.rows[i]['verse']}" for i in ranked[:max_references]]
 
     def find(self, text: str, *, min_chars: int = 4, max_references: int = 1,
              match_sentences: bool = True, partial_match: bool = True) -> list[str]:
-        if not isinstance(text, str) or not text or len(text) > 16000 or CITATION_LINE.search(text):
+        if not isinstance(text, str) or not text or len(text) > MAX_LOOKUP_CHARS or CITATION_LINE.search(text):
             return []
         visible = FENCED_CODE.sub('', text)
         if partial_match:
@@ -171,10 +183,14 @@ def annotate_message(message: dict, index: VerseIndex, settings) -> tuple[dict |
     # Only actual outgoing text, never quoted messages, OCR, image captions or history.
     # Adjacent text segments may form one sentence; nontext segments form boundaries.
     chunks = []
+    text_length = 0
     for seg in segments:
         if not isinstance(seg, dict):
             return None, []
         if seg.get('type') == 'text' and isinstance(seg.get('data'), str):
+            text_length += len(seg['data'])
+            if text_length > MAX_LOOKUP_CHARS:
+                return None, []
             chunks.append(seg['data'])
         else:
             chunks.append('\x00')

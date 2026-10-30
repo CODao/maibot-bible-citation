@@ -92,6 +92,25 @@ class MatchTests(unittest.TestCase):
    self.assertEqual((await plugin.get_config_widget_state())['status'].tone,'error')
    await plugin.on_unload()
   asyncio.run(run())
+ def test_scan_length_boundary(self):
+  short='喵'*(p.MAX_LOOKUP_CHARS-len('日光之下并无新事'))+'日光之下并无新事'
+  self.assertTrue(self.index.find(short))
+  self.assertEqual(self.index.find(short+'喵'),[])
+ def test_scan_budget_exhaustion(self):
+  from unittest.mock import patch
+  with patch.object(p,'monotonic',side_effect=[0,1]):
+   self.assertEqual(self.index.find('日光之下并无新事'),[])
+ def test_long_reply_unchanged_without_query(self):
+  from unittest.mock import patch
+  original=self.msg('日光之下并无新事。'+'喵'*p.MAX_LOOKUP_CHARS)
+  with patch.object(self.index,'find',side_effect=RuntimeError('should not query')):
+   self.assertIsNone(p.annotate_message(original,self.index,p.Settings())[0])
+  async def run():
+   plugin=p.BibleCitationPlugin();plugin.set_plugin_config({});await plugin.on_load()
+   result=await plugin.before_send(message=original)
+   self.assertEqual(result,{'action':'continue'})
+   await plugin.on_unload()
+  asyncio.run(run())
  def test_source_integrity(self):
   self.assertEqual(len(self.index.rows),31021);self.assertEqual(len({r['book']for r in self.index.rows}),66)
   self.assertEqual(self.index.rows[-1]['book'],'启示录');self.assertEqual(self.index.rows[-1]['chapter'],22);self.assertEqual(self.index.rows[-1]['verse'],21)
