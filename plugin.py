@@ -257,30 +257,49 @@ class BibleCitationPlugin(MaiBotPlugin):
         state = f'本地简体和合本：66 卷 / {count:,} 条经文；仅本地匹配，不调用模型。\n本次运行检查 {self.checked} 条，标注 {self.matched} 条（含本机自检）。\n{self.test_status}'
         if self.last_references:
             state += '\n最近命中出处：' + '、'.join(self.last_references)
-        return {'status': ConfigWidgetState(text=state, tone='success' if count else 'warning'),
+        return {'status': ConfigWidgetState(text=state, tone='error' if self.test_status.startswith('自检失败') else ('success' if count else 'warning')),
                 'self_test': ConfigWidgetState(disabled=self.index is None)}
 
     async def on_config_widget_action(self, action_id: str):
         if action_id != 'self_test' or self.index is None:
             raise ValueError('Unsupported action or index unavailable')
+        self.test_status = '自检进行中，尚未通过'
         sample = {'platform':'qq', 'message_info':{'group_info':{'group_id':'local-test','group_name':'local-test'}},
                   'raw_message':[{'type':'text','data':'日光之下并无新事。'}],
                   'processed_plain_text':'日光之下并无新事。'}
         changed, refs = annotate_message(sample, self.index, Settings())
-        assert refs == ['传道书 1:9'] and changed['raw_message'][-1]['data'] == '\n--出自（传道书 1:9）'
-        assert not self.index.find('今晚吃火锅还是烧烤呀')
-        assert not self.index.find('好的')
+        if not (refs == ['传道书 1:9'] and changed['raw_message'][-1]['data'] == '\n--出自（传道书 1:9）'):
+            self.test_status = '自检失败：固定经文与出处不一致'
+            raise RuntimeError(self.test_status)
+        if not (not self.index.find('今晚吃火锅还是烧烤呀')):
+            self.test_status = '自检失败：无关文字被误匹配'
+            raise RuntimeError(self.test_status)
+        if not (not self.index.find('好的')):
+            self.test_status = '自检失败：过短查询被误匹配'
+            raise RuntimeError(self.test_status)
         partial = await self.before_send(message={**sample, 'raw_message': [{'type': 'text', 'data': '那“请你给我水喝”也算命中啊'}], 'processed_plain_text': '那“请你给我水喝”也算命中啊'}, typing=False, set_reply=False, storage_message=True, show_log=False)
-        assert '创世记 24:45' in partial['modified_kwargs']['message']['raw_message'][-1]['data']
-        assert partial['modified_kwargs']['typing'] is False
+        if not ('创世记 24:45' in partial['modified_kwargs']['message']['raw_message'][-1]['data']):
+            self.test_status = '自检失败：部分经文出处不一致'
+            raise RuntimeError(self.test_status)
+        if not (partial['modified_kwargs']['typing'] is False):
+            self.test_status = '自检失败：发送参数未保留'
+            raise RuntimeError(self.test_status)
         short, _ = annotate_message({**sample, 'raw_message': [{'type': 'text', 'data': '给我水喝'}], 'processed_plain_text': '给我水喝'}, self.index, Settings())
-        assert short is not None
+        if not (short is not None):
+            self.test_status = '自检失败：短回复例外失效'
+            raise RuntimeError(self.test_status)
         long_short, _ = annotate_message({**sample, 'raw_message': [{'type': 'text', 'data': '那给我水喝也算命中啊'}], 'processed_plain_text': '那给我水喝也算命中啊'}, self.index, Settings())
-        assert long_short is None
+        if not (long_short is None):
+            self.test_status = '自检失败：长回复门槛失效'
+            raise RuntimeError(self.test_status)
         preserved = partial['modified_kwargs']['message']['raw_message'][0]['data']
-        assert preserved == '那“请你给我水喝”也算命中啊'
+        if not (preserved == '那“请你给我水喝”也算命中啊'):
+            self.test_status = '自检失败：实际回复正文被改写'
+            raise RuntimeError(self.test_status)
         punctuation_only = await self.before_send(message={**sample, 'raw_message': [{'type': 'text', 'data': '？！'}], 'processed_plain_text': '？！'})
-        assert punctuation_only == {'action': 'continue'}
+        if not (punctuation_only == {'action': 'continue'}):
+            self.test_status = '自检失败：纯标点回复被拦截'
+            raise RuntimeError(self.test_status)
         self.test_status = '自检通过：仅查询副本清理标点，逗号句号保留为边界；实际回复正文完整保留；5 字门槛及短回复例外正常。'
 
 

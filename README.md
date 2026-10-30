@@ -80,4 +80,8 @@ python -m unittest discover -s tests -v
 
 ## 插件类型
 
-本插件为 `extension`，仅注册发送前 Hook，不提供模型调用的 Tool/Command。市场图标为 📖。配置更新由 SDK 自动应用，插件保留必需的更新回调。
+本插件为 `extension`，仅注册发送前 Hook，不提供模型调用的 Tool/Command。市场图标使用《吸血鬼幸存者》的“国王圣经”道具图标，详见 [第三方素材说明](THIRD_PARTY_NOTICES.md)。配置更新由 SDK 自动应用，插件保留必需的更新回调。
+
+## 自检与优化模式
+
+自检使用显式判断与异常，不依赖 `assert`，在 `python -O` 下仍会校验。测试包含故意破坏匹配器的失败路径。图标及代码的许可范围分别列于 LICENSE 和 THIRD_PARTY_NOTICES.md。

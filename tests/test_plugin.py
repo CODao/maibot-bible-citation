@@ -80,6 +80,18 @@ class MatchTests(unittest.TestCase):
    self.assertIsNone(p.annotate_message(self.msg('那给我水喝。也算命中啊'),self.index,p.Settings())[0])
    await plugin.on_unload()
   asyncio.run(run())
+ def test_self_test_fails_when_matcher_broken(self):
+  from unittest.mock import patch
+  async def run():
+   plugin=p.BibleCitationPlugin();plugin.set_plugin_config({});await plugin.on_load()
+   await plugin.on_config_widget_action('self_test')
+   with patch.object(plugin.index,'find',return_value=[]):
+    with self.assertRaisesRegex(RuntimeError,'经文'):
+     await plugin.on_config_widget_action('self_test')
+   self.assertTrue(plugin.test_status.startswith('自检失败'))
+   self.assertEqual((await plugin.get_config_widget_state())['status'].tone,'error')
+   await plugin.on_unload()
+  asyncio.run(run())
  def test_source_integrity(self):
   self.assertEqual(len(self.index.rows),31021);self.assertEqual(len({r['book']for r in self.index.rows}),66)
   self.assertEqual(self.index.rows[-1]['book'],'启示录');self.assertEqual(self.index.rows[-1]['chapter'],22);self.assertEqual(self.index.rows[-1]['verse'],21)
