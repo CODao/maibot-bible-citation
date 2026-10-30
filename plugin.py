@@ -233,8 +233,8 @@ class BibleCitationPlugin(MaiBotPlugin):
         self.index = None
 
     async def on_config_update(self, scope: str, config_data: dict, version: str):
-        if scope == 'self':
-            self.set_plugin_config(config_data)
+        # The SDK applies self.config before invoking this required callback.
+        pass
 
     @HookHandler('send_service.before_send', name='bible_exact_citation',
                  description='发送前本地逐字匹配圣经原句，追加经卷章节',
