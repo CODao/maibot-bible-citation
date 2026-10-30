@@ -92,6 +92,21 @@ class MatchTests(unittest.TestCase):
    self.assertEqual((await plugin.get_config_widget_state())['status'].tone,'error')
    await plugin.on_unload()
   asyncio.run(run())
+ def test_widget_self_test_status_tones(self):
+  async def run():
+   plugin=p.BibleCitationPlugin();plugin.set_plugin_config({})
+   self.assertEqual((await plugin.get_config_widget_state())['status'].tone,'warning')
+   self.assertTrue((await plugin.get_config_widget_state())['self_test'].disabled)
+   await plugin.on_load()
+   for status,tone in [('尚未执行自检','warning'),('自检进行中，尚未通过','warning'),('自检失败：测试失败','error'),('自检通过：校验正常','success')]:
+    with self.subTest(status=status):
+     plugin.test_status=status
+     widget=await plugin.get_config_widget_state()
+     self.assertEqual(widget['status'].tone,tone)
+     self.assertIn(status,widget['status'].text)
+     self.assertFalse(widget['self_test'].disabled)
+   await plugin.on_unload()
+  asyncio.run(run())
  def test_scan_length_boundary(self):
   short='喵'*(p.MAX_LOOKUP_CHARS-len('日光之下并无新事'))+'日光之下并无新事'
   self.assertTrue(self.index.find(short))

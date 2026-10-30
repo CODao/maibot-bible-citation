@@ -273,7 +273,12 @@ class BibleCitationPlugin(MaiBotPlugin):
         state = f'本地简体和合本：66 卷 / {count:,} 条经文；仅本地匹配，不调用模型。\n本次运行检查 {self.checked} 条，标注 {self.matched} 条（含本机自检）。\n{self.test_status}'
         if self.last_references:
             state += '\n最近命中出处：' + '、'.join(self.last_references)
-        return {'status': ConfigWidgetState(text=state, tone='error' if self.test_status.startswith('自检失败') else ('success' if count else 'warning')),
+        tone = 'warning'
+        if self.test_status.startswith('自检失败'):
+            tone = 'error'
+        elif self.test_status.startswith('自检通过'):
+            tone = 'success'
+        return {'status': ConfigWidgetState(text=state, tone=tone),
                 'self_test': ConfigWidgetState(disabled=self.index is None)}
 
     async def on_config_widget_action(self, action_id: str):

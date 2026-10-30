@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "id": "local.bible-citation",
   "name": "大肥鱼·圣经原句出处",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "QQ 群聊回复中连续片段与本机简体和合本逐字相同时，自动追加经卷章节；支持部分命中，无需模型。",
   "author": {
     "name": "CODao",
@@ -34,7 +34,7 @@
   "display": {
     "icon": {
       "type": "local",
-      "value": "assets/king-bible.png",
+      "value": "assets/bible-book.png",
       "fallback": "BookOpen",
       "background": "#19191E"
     }

@@ -23,5 +23,5 @@ SOFTWARE.
 Bundled Bible text is separately declared Public Domain by its source.
 See assets/source.json and README.md for attribution.
 
-The King Bible game icon is third-party artwork and is not licensed under
-this MIT License. See THIRD_PARTY_NOTICES.md for source and attribution.
+The original book icon (assets/bible-book.png) and its drawing source
+(tools/generate_icon.py) are covered by this MIT License.

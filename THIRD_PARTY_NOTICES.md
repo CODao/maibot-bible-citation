@@ -1,13 +1,12 @@
-# Third-party assets
+# Assets and third-party notices
 
-## King Bible icon
+## Original book icon (1.1.8 and later)
 
-`assets/king-bible.png` is the King Bible item icon from **Vampire Survivors**, obtained without editing from the official Vampire Survivors Wiki. Vampire Survivors and its game artwork belong to poncle and their respective rights holders. This icon is a third-party game asset, **not covered by this repository's MIT code license**. This plugin is an independent community project and is not an official poncle product.
+`assets/bible-book.png` is an original geometric illustration created for this project. Its drawing source is `tools/generate_icon.py`. Both are covered by the repository's MIT License. No game artwork, fonts or external image assets are used in this icon.
 
-- Source page: https://vampire.survivors.wiki/w/File:Icon-King_Bible.png
-- Item page: https://vampire.survivors.wiki/w/King_Bible
-- Download: https://vampire.survivors.wiki/images/thumb/Icon-King_Bible.png/128px-Icon-King_Bible.png?9aa7c
-- The source site's footer states CC BY-NC-SA 3.0 with additional terms; this notice does not assert that the underlying game artwork has been relicensed under MIT.
+## Historical releases
+
+Releases 1.1.6 and 1.1.7 bundled the Vampire Survivors King Bible game icon with a separate third-party notice. That artwork is no longer included in the current release. The notices and original license boundaries for those historical packages remain unchanged; this replacement does not relicense their artwork.
 
 ## Bible text
 
