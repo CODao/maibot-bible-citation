@@ -1,0 +1,13 @@
+{
+  "translation": "新标点和合本（简体）",
+  "id": "cmn-cu89s",
+  "license": "Public Domain",
+  "source_page": "https://ebible.org/bible/details.php?id=cmn-cu89s",
+  "download_url": "https://ebible.org/Scriptures/cmn-cu89s_vpl.zip",
+  "downloaded_at": "2026-10-29T07:55:37.369501+00:00",
+  "source_sha256": "6ecc47e24a97b2b9fd67b38d06a4cd754ec1c363c8a6b07636d591b2a747def5",
+  "data_sha256": "63e3819899a2d1c86b9bd84b30ebb75fc5af25fae57aa5952963eaf629db6729",
+  "verse_count": 31021,
+  "book_count": 66,
+  "note": "Source VPL records retained without changing verse wording or numbering; punctuation is ignored only at matching time."
+}

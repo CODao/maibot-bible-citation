@@ -1,0 +1,10 @@
+config.toml
+config_back/
+data/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+logs/
+.DS_Store
+dist/

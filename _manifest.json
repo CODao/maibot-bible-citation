@@ -1,0 +1,33 @@
+{
+  "manifest_version": 2,
+  "id": "local.bible-citation",
+  "name": "大肥鱼·圣经原句出处",
+  "version": "1.1.3",
+  "description": "QQ 群聊回复中连续片段与本机简体和合本逐字相同时，自动追加经卷章节；支持部分命中，无需模型。",
+  "author": {
+    "name": "CODao",
+    "url": "https://github.com/CODao"
+  },
+  "license": "MIT",
+  "host_application": {
+    "min_version": "1.3.17",
+    "max_version": "1.3.99"
+  },
+  "sdk": {
+    "min_version": "2.19.0",
+    "max_version": "2.19.99"
+  },
+  "capabilities": [],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  },
+  "urls": {
+    "repository": "https://github.com/CODao/maibot-bible-citation",
+    "homepage": "https://github.com/CODao/maibot-bible-citation",
+    "documentation": "https://github.com/CODao/maibot-bible-citation/blob/main/README.md",
+    "issues": "https://github.com/CODao/maibot-bible-citation/issues"
+  }
+}

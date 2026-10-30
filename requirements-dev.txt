@@ -1,0 +1,2 @@
+maibot-plugin-sdk==2.19.0
+pydantic>=2.14.1,<3
