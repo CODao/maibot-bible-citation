@@ -8,7 +8,7 @@ class MatchTests(unittest.TestCase):
  def msg(self,text):return {'message_id':'test','platform':'qq','message_info':{'group_info':{'group_id':'fixture','group_name':'fixture'},'additional_config':{'preserve':'yes'}},'raw_message':[{'type':'text','data':text}],'processed_plain_text':text,'account_id':'fixture','reply_to':'fixture'}
  def test_known_sentence(self):self.assertEqual(self.index.find('日光之下并无新事。'),['传道书 1:9'])
  def test_complete_verse(self):self.assertEqual(self.index.find('起初，神创造天地。'),['创世记 1:1'])
- def test_spaces_quotes_punctuation(self):self.assertEqual(self.index.find('“ 日光 之下，并无新事！”'),['传道书 1:9'])
+ def test_spaces_quotes_punctuation(self):self.assertEqual(self.index.find('“ 日光 之下并无新事！”'),['传道书 1:9'])
  def test_real_short_sentence(self):self.assertTrue(self.index.find('不要害怕。'))
  def test_unmatched_and_short(self):
   for s in ['好的','是的','干嘛','今晚吃火锅还是烧烤呀']:
@@ -44,8 +44,8 @@ class MatchTests(unittest.TestCase):
  def test_code_and_url_not_cited(self):
   self.assertEqual(self.index.find('```\n日光之下并无新事\n```'),[]);self.assertEqual(self.index.find('https://example.com/日光之下并无新事'),[])
  def test_partial_fragment(self):
-  self.assertEqual(self.index.find('那“给我水喝”也算命中啊'),['创世记 24:45'])
-  self.assertEqual(self.index.find('可以给我水喝吗'),['创世记 24:45'])
+  self.assertEqual(self.index.find('那“给我水喝”也算命中啊'),['创世记 24:14'])
+  self.assertEqual(self.index.find('可以给我水喝吗'),['创世记 24:14'])
   self.assertEqual(self.index.find('我觉得日光之下并无新事但还是吃饭吧'),['传道书 1:9'])
  def test_partial_toggle(self):
   self.assertEqual(self.index.find('那“给我水喝”也算命中啊',partial_match=False),[])
@@ -61,20 +61,23 @@ class MatchTests(unittest.TestCase):
   for text in ['那给我水喝也算命中啊','喵喵','！！！','   ']:
    self.assertIsNone(p.annotate_message(self.msg(text),self.index,p.Settings())[0])
   self.assertIsNotNone(p.annotate_message(self.msg('那请你给我水喝也算命中啊'),self.index,p.Settings())[0])
-  self.assertIsNotNone(p.annotate_message(self.msg('“ 给我，水喝！”'),self.index,p.Settings())[0])
- def test_punctuation_filter(self):
-  self.assertEqual(p.filter_body_punctuation('“嗨！”你在吗？hello,world.好，没事。'), '嗨你在吗hello,world.好，没事。')
-  self.assertEqual(p.filter_body_punctuation('（哦）【嗯】；：、—…《书》！？'), '哦嗯书')
-  self.assertEqual(p.filter_body_punctuation('Hi🙂，鱼。\n--出自（创世记 1:1）'), 'Hi🙂，鱼。\n--出自（创世记 1:1）')
- def test_filter_unmatched_and_empty_hook(self):
+  self.assertIsNotNone(p.annotate_message(self.msg('“ 给我水喝！”'),self.index,p.Settings())[0])
+ def test_lookup_only_punctuation_normalization(self):
+  self.assertEqual(p.normalize('“嗨！”你在吗？hello,world.好，没事。'), '嗨你在吗hello，world。好，没事。')
+  self.assertEqual(p.meaningful_length(p.normalize('给我水喝。')),4)
+ def test_original_reply_preserved(self):
   async def run():
-   plugin=p.BibleCitationPlugin();plugin.set_plugin_config({});await plugin.on_load()
-   r=await plugin.before_send(message=self.msg('喵喵喵？！'),typing=False)
-   self.assertEqual(r['modified_kwargs']['message']['raw_message'][0]['data'],'喵喵喵')
-   self.assertIs(r['modified_kwargs']['typing'],False)
-   self.assertEqual((await plugin.before_send(message=self.msg('？！')) )['action'],'abort')
-   plugin.set_plugin_config({'filter_punctuation':False,'plugin':{'config_version':'1.1.0'}})
-   self.assertNotIn('modified_kwargs',await plugin.before_send(message=self.msg('喵喵喵？！')))
+   plugin=p.BibleCitationPlugin();plugin.set_plugin_config({'filter_punctuation':True,'plugin':{'config_version':'1.1.0'}});await plugin.on_load()
+   for text in ['喵喵喵？！','？！','“请你给我水喝！”','看 https://example.com/a?q=1&v=2','**喵喵喵**\n（真的？）']:
+    original=self.msg(text);result=await plugin.before_send(message=original,typing=False,reply_message_id='fixture')
+    self.assertEqual(result['action'],'continue')
+    if 'modified_kwargs' in result:
+     sent=result['modified_kwargs']['message'];self.assertEqual(sent['raw_message'][0]['data'],text)
+     self.assertTrue(sent['processed_plain_text'].startswith(text+'\n--出自（'))
+     self.assertIs(result['modified_kwargs']['typing'],False)
+     self.assertEqual(result['modified_kwargs']['reply_message_id'],'fixture')
+    else:self.assertEqual(original,self.msg(text))
+   self.assertIsNone(p.annotate_message(self.msg('那给我水喝。也算命中啊'),self.index,p.Settings())[0])
    await plugin.on_unload()
   asyncio.run(run())
  def test_source_integrity(self):

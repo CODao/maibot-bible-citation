@@ -23,32 +23,23 @@ FENCED_CODE = re.compile(r'```.*?(?:```|\Z)', re.S)
 
 
 def normalize(text: str) -> str:
-    # Remove only formatting differences, not arbitrary words or symbols.
-    return ''.join(c for c in unicodedata.normalize('NFKC', text)
-                   if not c.isspace() and not unicodedata.category(c).startswith('P')).casefold()
-
-
-def filter_body_punctuation(text: str) -> str:
-    """Keep comma/period variants, preserving the explicitly requested footer."""
-    lines = []
-    for line in text.splitlines(keepends=True):
-        if CITATION_LINE.fullmatch(line.strip()):
-            lines.append(line)
+    """Normalize a lookup copy only; retain comma/period sentence boundaries."""
+    result = []
+    for c in unicodedata.normalize('NFKC', text):
+        if c.isspace():
             continue
-        lines.append(''.join(c for c in line if c in ',.，。' or not (
-            unicodedata.category(c).startswith('P') or
-            unicodedata.normalize('NFKC', c) in string.punctuation)))
-    return ''.join(lines)
+        if c in ',，':
+            result.append('，')
+        elif c in '.。':
+            result.append('。')
+        elif not (unicodedata.category(c).startswith('P') or c in string.punctuation):
+            result.append(c.casefold())
+    return ''.join(result)
 
 
-def filter_message_punctuation(message: dict) -> tuple[dict, bool]:
-    changed = deepcopy(message)
-    for segment in changed.get('raw_message', []):
-        if segment.get('type') == 'text' and isinstance(segment.get('data'), str):
-            segment['data'] = filter_body_punctuation(segment['data'])
-    if isinstance(changed.get('processed_plain_text'), str):
-        changed['processed_plain_text'] = filter_body_punctuation(changed['processed_plain_text'])
-    return changed, changed != message
+def meaningful_length(text: str) -> int:
+    return sum(not c.isspace() and c != '\x00' and not unicodedata.category(c).startswith('P')
+               for c in text)
 
 
 class VerseIndex:
@@ -120,7 +111,9 @@ class VerseIndex:
                 while right < len(token) and diagonal + right < verse_end and token[right] == self.corpus[diagonal + right]:
                     right += 1
                 covered.setdefault(diagonal, []).append((left, right))
-                length = right - left
+                length = meaningful_length(token[left:right])
+                if length < min_chars:
+                    continue
                 boundary = int(diagonal + left == verse_start) + int(diagonal + right == verse_end)
                 score = (length, boundary)
                 if score > best.get(row_id, (0, 0)):
@@ -143,7 +136,7 @@ class VerseIndex:
             if re.search(r'https?://|www\.', candidate, flags=re.I):
                 continue
             token = normalize(candidate)
-            if len(token) >= min_chars and any('\u3400' <= c <= '\u9fff' for c in token) and token not in normalized:
+            if meaningful_length(token) >= min_chars and any('\u3400' <= c <= '\u9fff' for c in token) and token not in normalized:
                 normalized.append(token)
         # Prefer the longest exact sentence, then canonical book/chapter/verse order.
         normalized.sort(key=len, reverse=True)
@@ -186,7 +179,7 @@ def annotate_message(message: dict, index: VerseIndex, settings) -> tuple[dict |
         else:
             chunks.append('\x00')
     text = ''.join(chunks)
-    reply_length = len(normalize(FENCED_CODE.sub('', text)).replace('\x00', ''))
+    reply_length = meaningful_length(normalize(FENCED_CODE.sub('', text)))
     if not reply_length:
         return None, []
     effective_min_chars = min(settings.min_chars, reply_length)
@@ -214,7 +207,6 @@ class Settings(PluginConfigBase):
     group_only: bool = Field(True, description='仅处理 QQ 群聊，关闭后同时处理 QQ 私聊')
     min_chars: int = Field(5, ge=2, le=30, description='匹配片段的最少字数，不含标点空格；整条回复不足此字数时，须完整命中该短回复')
     partial_match: bool = Field(True, description='部分命中即可：回复中任意连续片段与同一节经文逐字一致便追加出处')
-    filter_punctuation: bool = Field(True, description='正文只保留中英文逗号和句号，出处行保留原格式；过滤后为空的纯文字消息不发送')
     match_sentences: bool = Field(True, description='关闭部分匹配时，是否也检查由句号问号感叹号分号或换行分隔的完整句子')
     max_references: int = Field(1, ge=1, le=3, description='最多追加几条出处；优先最长片段，同长度优先贴近经节首尾，再按经卷顺序')
 
@@ -253,21 +245,12 @@ class BibleCitationPlugin(MaiBotPlugin):
             return {'action': 'continue'}
         self.checked += 1
         changed, refs = await asyncio.to_thread(annotate_message, message, self.index, self.config)
-        candidate = changed if changed is not None else message
-        filtered = False
-        if self.config.enabled and self.config.filter_punctuation and message.get('platform') == 'qq' and (
-            not self.config.group_only or (message.get('message_info') or {}).get('group_info')
-        ) and not message.get('is_notify') and not message.get('is_command'):
-            candidate, filtered = filter_message_punctuation(candidate)
-            segments = candidate.get('raw_message', [])
-            if filtered and not any(s.get('type') != 'text' or str(s.get('data', '')).strip() for s in segments):
-                return {'action': 'abort'}
-        if changed is None and not filtered:
+        if changed is None:
             return {'action': 'continue'}
         if refs:
             self.matched += 1
             self.last_references = refs
-        return {'action': 'continue', 'modified_kwargs': {**kwargs, 'message': candidate}}
+        return {'action': 'continue', 'modified_kwargs': {**kwargs, 'message': changed}}
 
     async def get_config_widget_state(self):
         count = len(self.index.rows) if self.index is not None else 0
@@ -294,8 +277,12 @@ class BibleCitationPlugin(MaiBotPlugin):
         assert short is not None
         long_short, _ = annotate_message({**sample, 'raw_message': [{'type': 'text', 'data': '那给我水喝也算命中啊'}], 'processed_plain_text': '那给我水喝也算命中啊'}, self.index, Settings())
         assert long_short is None
-        assert filter_body_punctuation('“嗨！”你在吗？hello,world.好，没事。\n--出自（创世记 1:1）') == '嗨你在吗hello,world.好，没事。\n--出自（创世记 1:1）'
-        self.test_status = '自检通过：5 字门槛及短回复例外正常；正文仅保留中英文逗号句号，出处格式保留。'
+        preserved = partial['modified_kwargs']['message']['raw_message'][0]['data']
+        assert preserved == '那“请你给我水喝”也算命中啊'
+        punctuation_only = await self.before_send(message={**sample, 'raw_message': [{'type': 'text', 'data': '？！'}], 'processed_plain_text': '？！'})
+        assert punctuation_only == {'action': 'continue'}
+        self.test_status = '自检通过：仅查询副本清理标点，逗号句号保留为边界；实际回复正文完整保留；5 字门槛及短回复例外正常。'
+
 
 
 def create_plugin():

@@ -2,7 +2,6 @@ enabled = true
 group_only = true
 min_chars = 5
 partial_match = true
-filter_punctuation = true
 match_sentences = true
 max_references = 1
 
