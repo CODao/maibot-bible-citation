@@ -49,6 +49,30 @@ class MatchTests(unittest.TestCase):
   self.assertEqual(self.index.find('我觉得日光之下并无新事但还是吃饭吧'),['传道书 1:9'])
  def test_partial_toggle(self):
   self.assertEqual(self.index.find('那“给我水喝”也算命中啊',partial_match=False),[])
+ def test_partial_citation_names_only_the_matching_fragment(self):
+  text='选头像的时候还是挑蓝色吧。'
+  message=self.msg(text)
+  annotated,refs=p.annotate_message(message,self.index,p.Settings(allow_fragment_match=True))
+  self.assertEqual(refs,['约书亚记 9:13'])
+  self.assertEqual(annotated['processed_plain_text'],text+'\n--片段重合（约书亚记 9:13：「的时候还是」）')
+  self.assertEqual(annotated['raw_message'][:-1],message['raw_message'])
+  self.assertIsNone(p.annotate_message(annotated,self.index,p.Settings(allow_fragment_match=True))[0])
+ def test_strict_match_requires_a_complete_reply_sentence(self):
+  settings=p.Settings()
+  self.assertIsNone(p.annotate_message(self.msg('选头像的时候还是挑蓝色吧。'),self.index,settings)[0])
+  self.assertIsNone(p.annotate_message(self.msg('日光之下！并无新事。'),self.index,settings)[0])
+  self.assertIsNone(p.annotate_message(self.msg('https://example.com/甲.日光之下并无新事'),self.index,settings)[0])
+  text='今天喝咖啡。日光之下并无新事。'
+  message,refs=p.annotate_message(self.msg(text),self.index,settings)
+  self.assertEqual(refs,['传道书 1:9'])
+  self.assertEqual(message['processed_plain_text'],text+'\n--整句匹配（传道书 1:9：「日光之下并无新事」）')
+  self.assertIsNotNone(p.annotate_message(self.msg('请你给我水。'),self.index,settings)[0])
+ def test_legacy_fragment_setting_does_not_enable_fragment_matching_after_upgrade(self):
+  plugin=p.BibleCitationPlugin()
+  plugin.set_plugin_config({'plugin':{'config_version':'1.1.0'},'partial_match':True,'max_references':2})
+  self.assertFalse(plugin.config.allow_fragment_match)
+  self.assertEqual(plugin.config.max_references,2)
+  self.assertIsNone(p.annotate_message(self.msg('选头像的时候还是挑蓝色吧。'),self.index,plugin.config)[0])
  def test_no_cross_media_boundary(self):
   m=self.msg('给我');m['raw_message'] += [{'type':'image','data':'fixture'},{'type':'text','data':'水喝'}]
   self.assertIsNone(p.annotate_message(m,self.index,p.Settings())[0])
@@ -60,7 +84,7 @@ class MatchTests(unittest.TestCase):
    self.assertIsNotNone(p.annotate_message(self.msg(text),self.index,p.Settings())[0])
   for text in ['那给我水喝也算命中啊','喵喵','！！！','   ']:
    self.assertIsNone(p.annotate_message(self.msg(text),self.index,p.Settings())[0])
-  self.assertIsNotNone(p.annotate_message(self.msg('那请你给我水喝也算命中啊'),self.index,p.Settings())[0])
+  self.assertIsNotNone(p.annotate_message(self.msg('那请你给我水喝也算命中啊'),self.index,p.Settings(allow_fragment_match=True))[0])
   self.assertIsNotNone(p.annotate_message(self.msg('“ 给我水喝！”'),self.index,p.Settings())[0])
  def test_lookup_only_punctuation_normalization(self):
   self.assertEqual(p.normalize('“嗨！”你在吗？hello,world.好，没事。'), '嗨你在吗hello，world。好，没事。')
@@ -85,7 +109,7 @@ class MatchTests(unittest.TestCase):
   async def run():
    plugin=p.BibleCitationPlugin();plugin.set_plugin_config({});await plugin.on_load()
    await plugin.on_config_widget_action('self_test')
-   with patch.object(plugin.index,'find',return_value=[]):
+   with patch.object(plugin.index,'find_matches',return_value=[]):
     with self.assertRaisesRegex(RuntimeError,'经文'):
      await plugin.on_config_widget_action('self_test')
    self.assertTrue(plugin.test_status.startswith('自检失败'))
@@ -118,7 +142,7 @@ class MatchTests(unittest.TestCase):
  def test_long_reply_unchanged_without_query(self):
   from unittest.mock import patch
   original=self.msg('日光之下并无新事。'+'喵'*p.MAX_LOOKUP_CHARS)
-  with patch.object(self.index,'find',side_effect=RuntimeError('should not query')):
+  with patch.object(self.index,'find_matches',side_effect=RuntimeError('should not query')):
    self.assertIsNone(p.annotate_message(original,self.index,p.Settings())[0])
   async def run():
    plugin=p.BibleCitationPlugin();plugin.set_plugin_config({});await plugin.on_load()

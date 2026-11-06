@@ -1,7 +1,7 @@
 enabled = true
 group_only = true
 min_chars = 5
-partial_match = true
+allow_fragment_match = false
 match_sentences = true
 max_references = 1
 

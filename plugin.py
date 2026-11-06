@@ -4,7 +4,7 @@ from __future__ import annotations
 from bisect import bisect_right
 from copy import deepcopy
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, NamedTuple
 from time import monotonic
 import asyncio
 import hashlib
@@ -18,8 +18,8 @@ from maibot_sdk.config_widgets import ConfigWidget, ConfigWidgetState
 from maibot_sdk.types import HookMode, HookOrder, ErrorPolicy
 from pydantic import Field
 
-CITATION_LINE = re.compile(r'(?m)^\s*--出自[（(][^\n]+[）)]\s*$')
-SENTENCE_BREAK = re.compile(r'[。！？!?；;\n\r]+')
+CITATION_LINE = re.compile(r'(?m)^\s*--(?:出自|整句匹配|片段重合)[（(][^\n]+[）)]\s*$')
+SENTENCE_BREAK = re.compile(r'[。！？!?；;\n\r]+|(?<=[\u3400-\u9fff])\.')
 FENCED_CODE = re.compile(r'```.*?(?:```|\Z)', re.S)
 MAX_LOOKUP_CHARS = 512
 PARTIAL_SCAN_BUDGET_SECONDS = 0.150
@@ -43,6 +43,12 @@ def normalize(text: str) -> str:
 def meaningful_length(text: str) -> int:
     return sum(not c.isspace() and c != '\x00' and not unicodedata.category(c).startswith('P')
                for c in text)
+
+
+class VerseMatch(NamedTuple):
+    reference: str
+    fragment: str
+    whole_reply: bool
 
 
 class VerseIndex:
@@ -76,10 +82,11 @@ class VerseIndex:
                 for bit in (value & self.seed_mask, (value >> 24) & self.seed_mask):
                     self.seed_bits[bit >> 3] |= 1 << (bit & 7)
 
-    def _partial_find(self, text: str, min_chars: int, max_references: int) -> list[str]:
+    def _partial_find(self, text: str, min_chars: int, max_references: int) -> list[VerseMatch]:
         # Native substring searches keep this small and dependency-free. Extend
         # every exact seed to the longest shared span without crossing a verse.
         deadline = monotonic() + PARTIAL_SCAN_BUDGET_SECONDS
+        whole_reply = normalize(text.strip('\x00'))
         token = normalize(re.sub(r'(?:https?://|www\.)\S+', '\x00', text, flags=re.I))
         best = {}
         covered = {}
@@ -126,47 +133,64 @@ class VerseIndex:
                     continue
                 boundary = int(diagonal + left == verse_start) + int(diagonal + right == verse_end)
                 score = (length, boundary)
-                if score > best.get(row_id, (0, 0)):
-                    best[row_id] = score
+                if score > best.get(row_id, (0, 0))[:2]:
+                    best[row_id] = (length, boundary, left, right)
         ranked = sorted(best, key=lambda i: (-best[i][0], -best[i][1], i))
         if monotonic() >= deadline:
             return []
-        return [f"{self.rows[i]['book']} {self.rows[i]['chapter']}:{self.rows[i]['verse']}" for i in ranked[:max_references]]
+        matches = []
+        for row_id in ranked[:max_references]:
+            row = self.rows[row_id]
+            _, _, left, right = best[row_id]
+            fragment = token[left:right]
+            matches.append(VerseMatch(f"{row['book']} {row['chapter']}:{row['verse']}",
+                                      fragment, fragment == whole_reply))
+        return matches
 
     def find(self, text: str, *, min_chars: int = 4, max_references: int = 1,
              match_sentences: bool = True, partial_match: bool = True) -> list[str]:
+        return [match.reference for match in self.find_matches(
+            text, min_chars=min_chars, max_references=max_references,
+            match_sentences=match_sentences, partial_match=partial_match)]
+
+    def find_matches(self, text: str, *, min_chars: int, max_references: int,
+                     match_sentences: bool, partial_match: bool) -> list[VerseMatch]:
         if not isinstance(text, str) or not text or len(text) > MAX_LOOKUP_CHARS or CITATION_LINE.search(text):
             return []
-        visible = FENCED_CODE.sub('', text)
+        visible = FENCED_CODE.sub('\x00', text)
         if partial_match:
             return self._partial_find(visible, min_chars, max_references)
-        candidates = [visible]
-        if match_sentences:
-            candidates.extend(SENTENCE_BREAK.split(visible))
+        searchable = re.sub(r'(?:https?://|www\.)\S+', '\x00', visible, flags=re.I)
+        candidates = SENTENCE_BREAK.split(searchable) if match_sentences else [searchable]
         normalized = []
         for candidate in candidates:
-            if re.search(r'https?://|www\.', candidate, flags=re.I):
-                continue
-            token = normalize(candidate)
+            token = normalize(candidate).strip('\x00').rstrip('。')
             if meaningful_length(token) >= min_chars and any('\u3400' <= c <= '\u9fff' for c in token) and token not in normalized:
                 normalized.append(token)
         # Prefer the longest exact sentence, then canonical book/chapter/verse order.
         normalized.sort(key=len, reverse=True)
-        references = []
+        matches = []
+        seen = set()
+        whole_reply = normalize(visible).strip('\x00').rstrip('。')
         for token in normalized[:64]:
             start = 0
-            while len(references) < max_references:
+            while len(matches) < max_references:
                 pos = self.corpus.find(token, start)
                 if pos < 0:
                     break
                 row = self.rows[bisect_right(self.starts, pos) - 1]
                 reference = f"{row['book']} {row['chapter']}:{row['verse']}"
-                if reference not in references:
-                    references.append(reference)
+                # The normalized index can join across removed punctuation.
+                # A strict hit must also fit inside one actual verse sentence.
+                if reference not in seen and any(
+                    token in normalize(sentence) for sentence in SENTENCE_BREAK.split(row['text'])
+                ):
+                    seen.add(reference)
+                    matches.append(VerseMatch(reference, token, token == whole_reply))
                 start = pos + len(token)
-            if len(references) >= max_references:
+            if len(matches) >= max_references:
                 break
-        return references
+        return matches
 
 
 def annotate_message(message: dict, index: VerseIndex, settings) -> tuple[dict | None, list[str]]:
@@ -198,19 +222,27 @@ def annotate_message(message: dict, index: VerseIndex, settings) -> tuple[dict |
     reply_length = meaningful_length(normalize(FENCED_CODE.sub('', text)))
     if not reply_length:
         return None, []
-    effective_min_chars = min(settings.min_chars, reply_length)
-    refs = index.find(text, min_chars=effective_min_chars,
-                      max_references=settings.max_references,
-                      match_sentences=settings.match_sentences,
-                      partial_match=settings.partial_match)
-    if not refs:
+    short_reply = reply_length < settings.min_chars
+    partial_match = settings.allow_fragment_match and not short_reply
+    matches = index.find_matches(text, min_chars=min(settings.min_chars, reply_length),
+                                 max_references=settings.max_references,
+                                 match_sentences=settings.match_sentences and not short_reply,
+                                 partial_match=partial_match)
+    if not matches:
         return None, []
-    suffix = '\n' + '\n'.join(f'--出自（{ref}）' for ref in refs)
+    lines = []
+    for match in matches:
+        if match.whole_reply:
+            lines.append(f'--出自（{match.reference}）')
+        else:
+            label = '片段重合' if partial_match else '整句匹配'
+            lines.append(f'--{label}（{match.reference}：「{match.fragment}」）')
+    suffix = '\n' + '\n'.join(lines)
     changed = deepcopy(message)
     changed['raw_message'].append({'type': 'text', 'data': suffix})
     processed = changed.get('processed_plain_text')
     changed['processed_plain_text'] = (processed if isinstance(processed, str) else text) + suffix
-    return changed, refs
+    return changed, [match.reference for match in matches]
 
 
 class PluginMetadata(PluginConfigBase):
@@ -221,8 +253,8 @@ class Settings(PluginConfigBase):
     plugin: PluginMetadata = Field(default_factory=PluginMetadata)
     enabled: bool = Field(True, description='开启圣经原句自动出处标注')
     group_only: bool = Field(True, description='仅处理 QQ 群聊，关闭后同时处理 QQ 私聊')
-    min_chars: int = Field(5, ge=2, le=30, description='匹配片段的最少字数，不含标点空格；整条回复不足此字数时，须完整命中该短回复')
-    partial_match: bool = Field(True, description='部分命中即可：回复中任意连续片段与同一节经文逐字一致便追加出处')
+    min_chars: int = Field(5, ge=2, le=30, description='每个候选的最少字数，不含标点空格。整条回复不足此字数时，按整条匹配。')
+    allow_fragment_match: bool = Field(False, description='启用后允许连续片段命中。默认关闭，只标注完整回复或完整句子。')
     match_sentences: bool = Field(True, description='关闭部分匹配时，是否也检查由句号问号感叹号分号或换行分隔的完整句子')
     max_references: int = Field(1, ge=1, le=3, description='最多追加几条出处；优先最长片段，同长度优先贴近经节首尾，再按经卷顺序')
 
@@ -298,11 +330,14 @@ class BibleCitationPlugin(MaiBotPlugin):
         if not (not self.index.find('好的')):
             self.test_status = '自检失败：过短查询被误匹配'
             raise RuntimeError(self.test_status)
-        partial = await self.before_send(message={**sample, 'raw_message': [{'type': 'text', 'data': '那“请你给我水喝”也算命中啊'}], 'processed_plain_text': '那“请你给我水喝”也算命中啊'}, typing=False, set_reply=False, storage_message=True, show_log=False)
-        if not ('创世记 24:45' in partial['modified_kwargs']['message']['raw_message'][-1]['data']):
-            self.test_status = '自检失败：部分经文出处不一致'
+        quoted = '“日光之下并无新事！”'
+        result = await self.before_send(message={**sample, 'raw_message': [{'type': 'text', 'data': quoted}], 'processed_plain_text': quoted}, typing=False, set_reply=False, storage_message=True, show_log=False)
+        sent = result.get('modified_kwargs', {})
+        segments = sent.get('message', {}).get('raw_message', [])
+        if not segments or segments[-1]['data'] != '\n--出自（传道书 1:9）':
+            self.test_status = '自检失败：整句经文出处不一致'
             raise RuntimeError(self.test_status)
-        if not (partial['modified_kwargs']['typing'] is False):
+        if sent.get('typing') is not False:
             self.test_status = '自检失败：发送参数未保留'
             raise RuntimeError(self.test_status)
         short, _ = annotate_message({**sample, 'raw_message': [{'type': 'text', 'data': '给我水喝'}], 'processed_plain_text': '给我水喝'}, self.index, Settings())
@@ -313,15 +348,14 @@ class BibleCitationPlugin(MaiBotPlugin):
         if not (long_short is None):
             self.test_status = '自检失败：长回复门槛失效'
             raise RuntimeError(self.test_status)
-        preserved = partial['modified_kwargs']['message']['raw_message'][0]['data']
-        if not (preserved == '那“请你给我水喝”也算命中啊'):
+        if segments[0]['data'] != quoted:
             self.test_status = '自检失败：实际回复正文被改写'
             raise RuntimeError(self.test_status)
         punctuation_only = await self.before_send(message={**sample, 'raw_message': [{'type': 'text', 'data': '？！'}], 'processed_plain_text': '？！'})
         if not (punctuation_only == {'action': 'continue'}):
             self.test_status = '自检失败：纯标点回复被拦截'
             raise RuntimeError(self.test_status)
-        self.test_status = '自检通过：仅查询副本清理标点，逗号句号保留为边界；实际回复正文完整保留；5 字门槛及短回复例外正常。'
+        self.test_status = '自检通过：整句经文出处、回复正文、发送参数及短回复匹配均正常。'
 
 
 
